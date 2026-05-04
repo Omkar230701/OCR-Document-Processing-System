@@ -1,93 +1,42 @@
 import re
 
-def extract_invoice_data(text):
+def extract_data(text):
     data = {}
 
-    # ---------------------------
-    # Clean OCR text
-    # ---------------------------
-    clean_text = text.replace("\n", " ")
+    # Invoice Number
+    invoice = re.search(r'(INV[-\s]?\d+)', text, re.IGNORECASE)
+    data["Invoice Number"] = invoice.group(1) if invoice else "Not Found"
 
-    # ---------------------------
-    # 🔹 Invoice Number (robust)
-    # ---------------------------
-    invoice = re.search(
-        r'Invoice\s*(No|Number)?[:\s]*([A-Z]+[-\s]?\d+)',
-        clean_text,
-        re.IGNORECASE
-    )
+    # Date
+    date = re.search(r'(\d{2}[./-]\d{2}[./-]\d{4})', text)
+    data["Date"] = date.group(1) if date else "Not Found"
 
-    data["Invoice Number"] = invoice.group(2).strip() if invoice else "Not Found"
+    # Amount (FIXED LOGIC)
+    amounts = re.findall(r'(\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\d+\.\d{2})', text)
 
-    # ---------------------------
-    # 🔹 Date (multi-format support)
-    # ---------------------------
-    date = re.search(
-        r'(Issue Date|Invoice Date)[^\d]*(\d{2}[./\s]\d{2}[./\s]\d{4})',
-        clean_text,
-        re.IGNORECASE
-    )
+    if amounts:
+        cleaned = []
+        for amt in amounts:
+            amt = amt.replace(",", "")  # remove commas
+            try:
+                cleaned.append(float(amt))
+            except:
+                pass
 
-    if date:
-        raw = date.group(2)
-        digits = re.sub(r'[^\d]', '', raw)  # remove ., /, space
-        data["Date"] = f"{digits[:2]}/{digits[2:4]}/{digits[4:]}"
-    else:
-        data["Date"] = "Not Found"
-
-    # ---------------------------
-    # 🔹 Amount (robust + OCR fix)
-    # ---------------------------
-    amount = re.search(
-        r'\bTotal\b[^\d]*(\d+[.,]?\d*)',
-        clean_text,
-        re.IGNORECASE
-    )
-
-    if amount:
-        raw_amt = amount.group(1)
-
-        # Replace comma with dot
-        cleaned = raw_amt.replace(",", ".")
-
-        # Fix OCR errors like 55.006 → 55.00
-        if "." in cleaned:
-            parts = cleaned.split(".")
-            if len(parts[1]) > 2:
-                cleaned = parts[0] + "." + parts[1][:2]
-
-        data["Amount"] = cleaned
+        if cleaned:
+            max_value = max(cleaned)
+            data["Amount"] = f"{max_value:.2f}"
+        else:
+            data["Amount"] = "Not Found"
     else:
         data["Amount"] = "Not Found"
 
-    # ---------------------------
-    # 🔹 Email (strict)
-    # ---------------------------
-    email = re.search(r'\S+@\S+\.\S+', clean_text)
+    # Email
+    email = re.search(r'[\w\.-]+@[\w\.-]+', text)
     data["Email"] = email.group(0) if email else "Not Found"
 
-    # ---------------------------
-    # 🔹 Phone (10 digits)
-    # ---------------------------
-    phone = re.search(r'\b\d{10}\b', clean_text)
+    # Phone
+    phone = re.search(r'(\d{10}|\d{3}[-.\s]\d{3}[-.\s]\d{4})', text)
     data["Phone"] = phone.group(0) if phone else "Not Found"
-
-    # ---------------------------
-    # 🔹 Confidence Score
-    # ---------------------------
-    confidence = 0
-
-    if data["Invoice Number"] != "Not Found":
-        confidence += 0.25
-    if data["Date"] != "Not Found":
-        confidence += 0.25
-    if data["Amount"] != "Not Found":
-        confidence += 0.25
-    if data["Email"] != "Not Found":
-        confidence += 0.125
-    if data["Phone"] != "Not Found":
-        confidence += 0.125
-
-    data["Confidence Score"] = f"{int(confidence * 100)}%"
 
     return data

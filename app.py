@@ -1,86 +1,71 @@
 import streamlit as st
-from PIL import Image
-
 from ocr_engine import extract_text
+from extractor import extract_data
 from classifier import classify_document
-from extractor import extract_invoice_data
-
-
-# Page setup
-st.set_page_config(page_title="OCR System", layout="centered")
+import tempfile
 
 st.title("📄 OCR Document Processing System")
-st.markdown("---")
 
-uploaded_file = st.file_uploader(
-    "Upload Document",
-    type=["png", "jpg", "jpeg"]
-)
+uploaded_file = st.file_uploader("Upload Document", type=["png", "jpg", "jpeg"])
 
-if uploaded_file is not None:
-    image = Image.open(uploaded_file)
+if uploaded_file:
+    st.image(uploaded_file, caption="Uploaded Document", width=400)
 
-    st.image(image, caption="Uploaded Document", use_container_width=True)
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        temp_file.write(uploaded_file.read())
+        temp_path = temp_file.name
 
-    if st.button("Process Document"):
+    # OCR
+    text = extract_text(temp_path)
+    text_lower = text.lower()
 
-        with st.spinner("Processing..."):
+    # ML prediction (baseline)
+    ml_type = classify_document(text)
 
-            # OCR
-            text = extract_text(image)
+    # STRONG RULE-BASED OVERRIDE (priority > ML)
+    # Order matters: invoice first, then receipt
+    if ("invoice" in text_lower 
+        or "total amount due" in text_lower 
+        or "due date" in text_lower):
+        doc_type = "invoice"
 
-            # Classification
-            doc_type = classify_document(text)
+    elif ("receipt" in text_lower 
+          or "payment" in text_lower 
+          or "paid by" in text_lower):
+        doc_type = "receipt"
 
-            # Extraction
-            if doc_type == "Invoice":
-                data = extract_invoice_data(text)
-            else:
-                data = {"Message": "Extraction only supported for invoices"}
+    else:
+        doc_type = ml_type  # fallback to ML
 
-        st.success("Processing Completed")
-        st.markdown("---")
+    # Extraction
+    data = extract_data(text)
 
-        # Document Type
-        st.subheader("📌 Document Type:")
-        st.write(doc_type)
+    # Display
+    st.subheader("📌 Document Type:")
+    st.write(doc_type)
 
-        # Extracted Text
-        st.subheader("📝 Extracted Text:")
-        st.text_area("", text, height=300)
+    st.subheader("📝 Extracted Text:")
+    st.text(text)
 
-        st.markdown("---")
+    st.subheader("📊 Extracted Data:")
+    st.json(data)
 
-        # Extracted Data
-        st.subheader("📊 Extracted Data:")
+    # Confidence scoring (balanced)
+    score = 0
 
-        if doc_type == "Invoice":
+    if data["Amount"] != "Not Found":
+        score += 40
 
-            col1, col2, col3 = st.columns(3)
+    if data["Date"] != "Not Found":
+        score += 25
 
-            col1.metric("Invoice No", data.get("Invoice Number", ""))
-            col2.metric("Date", data.get("Date", ""))
-            col3.metric("Amount", data.get("Amount", ""))
+    if doc_type != "unknown":
+        score += 20
 
-            st.write("📧 Email:", data.get("Email", "Not Found"))
-            st.write("📞 Phone:", data.get("Phone", "Not Found"))
+    if data["Invoice Number"] != "Not Found":
+        score += 10
 
-            # Confidence (FIXED)
-            confidence_str = data.get("Confidence Score", "0%").replace("%", "")
+    if data["Email"] != "Not Found" or data["Phone"] != "Not Found":
+        score += 5
 
-            try:
-                confidence_value = float(confidence_str)
-            except:
-                confidence_value = 0
-
-            st.progress(int(confidence_value))
-            st.caption(f"Confidence Score: {data.get('Confidence Score', '')}")
-
-            st.markdown("---")
-
-            # Proper JSON
-            st.subheader("📦 Raw Output (JSON):")
-            st.json(data)
-
-        else:
-            st.write(data)
+    st.write(f"Confidence Score: {score}%")
